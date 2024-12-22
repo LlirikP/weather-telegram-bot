@@ -1,6 +1,6 @@
 import requests
 
-API_KEY = "gSnz8YbLjmkAEw1HftGDLldD71XR2rrO"
+API_KEY = "Auow6ifvL6AdrADUqKuS2AzYs0gi9NTX"
 
 
 def get_weather(latitude, longitude, location_key=None, days_count=1):
@@ -101,6 +101,7 @@ def get_coordinates_from_city(city_name):
         return latitude, longitude, location_key
     except requests.exceptions.RequestException:
         return "Ошибка подключения к серверу."
+
 
 def get_city_by_coord(latitude, longitude):
     location_url = f"http://dataservice.accuweather.com/locations/v1/cities/geoposition/search"
