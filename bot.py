@@ -4,9 +4,6 @@ from main import get_weather, get_weather_data, get_coordinates_from_city, get_c
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.fsm.context import FSMContext
-import plotly.graph_objects as go
-import folium
-from io import BytesIO
 from aiogram.fsm.state import StatesGroup, State
 
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +14,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 
+# Определение состояний формы для обработки ввода пользователя
 class WeatherForm(StatesGroup):
     start_point = State()
     end_point = State()
@@ -24,6 +22,7 @@ class WeatherForm(StatesGroup):
     intermediate_points = State()
 
 
+# Команда /start: приветственное сообщение для пользователя
 @dp.message(F.text == '/start')
 async def send_welcome(message: types.Message):
     await message.reply(
@@ -33,6 +32,7 @@ async def send_welcome(message: types.Message):
     )
 
 
+# Команда /help: описание доступных команд
 @dp.message(F.text == '/help')
 async def send_help(message: types.Message):
     await message.reply(
@@ -43,8 +43,10 @@ async def send_help(message: types.Message):
     )
 
 
+# Команда /weather: начало запроса прогноза погоды
 @dp.message(F.text == '/weather')
 async def send_weather_start(message: types.Message, state: FSMContext):
+    # Предложение отправить геолокацию или ввести город
     keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text='Отправить свою геолокацию', request_location=True)]],
         resize_keyboard=True,
@@ -54,6 +56,7 @@ async def send_weather_start(message: types.Message, state: FSMContext):
     await state.set_state(WeatherForm.start_point)
 
 
+# Обработка текстового ввода начальной точки маршрута
 @dp.message(WeatherForm.start_point, F.content_type == "text")
 async def start_point_text(message: types.Message, state: FSMContext):
     start_point = message.text.strip()
@@ -68,6 +71,7 @@ async def start_point_text(message: types.Message, state: FSMContext):
     await message.answer("Введите конечную точку маршрута:")
 
 
+# Обработка геолокации для начальной точки маршрута
 @dp.message(WeatherForm.start_point, F.content_type == "location")
 async def start_point_location(message: types.Message, state: FSMContext):
     latitude = message.location.latitude
@@ -84,6 +88,7 @@ async def start_point_location(message: types.Message, state: FSMContext):
     await state.set_state(WeatherForm.end_point)
 
 
+# Обработка ввода конечной точки маршрута
 @dp.message(WeatherForm.end_point)
 async def end_point_text(message: types.Message, state: FSMContext):
     end_point = message.text.strip()
@@ -99,6 +104,7 @@ async def end_point_text(message: types.Message, state: FSMContext):
     await message.answer("Введите промежуточные города через запятую, если они есть. Если нет, просто отправьте 'Нет'.")
 
 
+# Обработка ввода промежуточных точек маршрута
 @dp.message(WeatherForm.intermediate_points)
 async def intermediate_points_text(message: types.Message, state: FSMContext):
     intermediate_points = message.text.strip()
@@ -118,65 +124,54 @@ async def intermediate_points_text(message: types.Message, state: FSMContext):
     await state.set_state(WeatherForm.days)
 
 
+# Обработка выбора временного интервала прогноза
 @dp.callback_query(WeatherForm.days)
 async def process_days(callback_query: types.CallbackQuery, state: FSMContext):
     days = int(callback_query.data)
     await callback_query.answer()
 
+    if days == 1:
+        await callback_query.message.answer(f"Получаем прогноз на {days} день...")
+    else:
+        await callback_query.message.answer(f"Получаем прогноз на {days} дней...")
+
     user_data = await state.get_data()
     start_point = user_data.get('start_point')
     end_point = user_data.get('end_point')
-    start_weather_data = []
-    end_weather_data = []
-    try:
-        start_coord = get_coordinates_from_city(start_point)
-        start_weather = get_weather(start_coord[0], start_coord[1], start_coord[2], days)
-        end_coord = get_coordinates_from_city(end_point)
-        end_weather = get_weather(end_coord[0], end_coord[1], end_coord[2], days)
-        for i in range(days):
-            start_weather_data.append(get_weather_data(start_weather, i))
-            end_weather_data.append(get_weather_data(end_weather, i))
+    intermediate_points = user_data.get('intermediate_points', [])
 
+    all_points = [start_point] + intermediate_points + [end_point]
+
+    forecast_data = {}
+
+    try:
+        # Получаем прогноз для каждой точки маршрута
+        for point in all_points:
+            coord = get_coordinates_from_city(point)
+            if coord:
+                weather = get_weather(coord[0], coord[1], coord[2], days)
+                forecast_data[point] = []
+                for i in range(days):
+                    forecast_data[point].append(get_weather_data(weather, i))
     except Exception as e:
         await callback_query.message.answer(f"Ошибка при получении данных: {e}")
         await state.clear()
         return
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=list(range(1, days+1)), y=[data['temperature'] for data in start_weather_data],
-                             mode='lines+markers', name=f'Температура в {start_point}'))
-    fig.add_trace(go.Scatter(x=list(range(1, days+1)), y=[data['temperature'] for data in end_weather_data],
-                             mode='lines+markers', name=f'Температура в {end_point}'))
+    # Формируем ответ с прогнозом для каждой точки маршрута
+    response = ""
+    for point in all_points:
+        response += f"\nПрогноз для {point}:\n"
+        for i in range(days):
+            response += f"День {i + 1}\n"
+            for key, value in forecast_data[point][i].items():
+                response += f"{key}: {value}\n"
 
-    fig.update_layout(title='Температурный прогноз на несколько дней',
-                      xaxis_title='День',
-                      yaxis_title='Температура (°C)',
-                      legend_title="Города")
-
-    img_bytes = fig.to_image(format="png")
-    img_buffer = BytesIO(img_bytes)
-
-    await callback_query.message.answer_photo(photo=img_buffer, caption="График прогноза температуры.")
-
-    map_ = folium.Map(location=[start_coord[0], start_coord[1]], zoom_start=6)
-    folium.Marker([start_coord[0], start_coord[1]], popup=start_point).add_to(map_)
-    folium.Marker([end_coord[0], end_coord[1]], popup=end_point).add_to(map_)
-
-    intermediate_points = user_data.get('intermediate_points', [])
-    for point in intermediate_points:
-        point_coord = get_coordinates_from_city(point)
-        if point_coord:
-            folium.Marker([point_coord[0], point_coord[1]], popup=point).add_to(map_)
-
-    map_html = '/tmp/map.html'
-    map_.save(map_html)
-
-    await callback_query.message.answer("Вот карта маршрута:", reply_markup=None)
-    await callback_query.message.answer_document(open(map_html, 'rb'))
-
+    await callback_query.message.answer(response)
     await state.clear()
 
 
+# Обработка неизвестных сообщений
 @dp.message()
 async def handle_unknown_message(message: types.Message):
     await message.answer('Извините, я не понял ваш запрос. Пожалуйста, выберите команду или кнопку.')
@@ -184,6 +179,7 @@ async def handle_unknown_message(message: types.Message):
 
 if __name__ == '__main__':
     try:
+        # Запуск бота с использованием асинхронного метода
         asyncio.run(dp.start_polling(bot))
     except Exception as e:
         logging.error(f'Ошибка при запуске бота: {e}')
